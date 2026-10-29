@@ -1,0 +1,761 @@
+{
+  "meta": {
+    "generatedAt": "2026-10-29T02:49:19.934Z",
+    "rangeLabel": "all",
+    "agents": [
+      "claude"
+    ],
+    "projectFilter": "all",
+    "totals": {
+      "sessions": 1,
+      "durationMs": 2119820,
+      "turns": 63,
+      "files": 35,
+      "netLines": 2885,
+      "toolCallsTotal": 88,
+      "toolSuccessRate": 98.9,
+      "totalCostUSD": 3.277517800000001,
+      "cacheReadCostUSD": 1.1267258000000002,
+      "pricedSessions": 1
+    },
+    "unpricedModels": [],
+    "estimatedModels": [],
+    "localModels": [],
+    "coverage": [
+      {
+        "agentName": "claude",
+        "total": 1,
+        "priced": 1,
+        "withLog": 1
+      }
+    ],
+    "userEmail": "himanshu_sachan@epam.com",
+    "periodStart": "2026-10-28T12:27:37.747Z",
+    "periodEnd": "2026-10-28T13:02:57.567Z"
+  },
+  "sessions": [
+    {
+      "sessionId": "879bd899-d8ab-4a9b-bc32-bd0bafeac5fd",
+      "agentName": "claude",
+      "provider": "ai-run-sso",
+      "title": "Read the current implementation of the project. and add this new functionality, Read this specific section from the \"Initial Provided Info/Money-column-resolution-rules.docx\" and formulate a solution for it. as per what is expected, :: **5.1 MCR-D1 — Gross-is-actually-Ceded** **The problem.** A cedant sends a file where the \"Gross Premium\" column is **not** the gross premium at all — it is the portion that has already been ceded to the reinsurer. The two are related by the cession rate: ceded = gross × cess%. So in a file where cession is 40%, the \"Gross Premium\" column contains only 40% of the real gross. If the engine trusts the label, every subsequent calculation is wrong by a factor of ~2.5. **How the engine detects it.** Three signals must all be present: 1. The column satisfies column ≈ G_implied × cess% — where G_implied is the gross premium reconstructed from other evidence (sum insured ratios, peer columns, or commission anchors). 2. The column's ratio to Sum Insured is materially lower than you'd expect from a true gross figure (because the ceded figure is naturally smaller). 3. The column does **not** satisfy G − C − T ≈ N on a full-value basis — because it isn't the full value. **Decision.** Resolve the column as ceded_premium and flag it as a meaning conflict so a reviewer confirms before the file proceeds. **Evidence output (what the user sees).** *\"Column equals cess% of the implied gross in X% of rows and is far below Sum Insured versus peer gross columns — it is the ceded share, not the full gross.\"* **Dependency.** Requires the cession rate (cess%) to be known. **Worked example.** Prem column = 4,000. Sum Insured = 1,000,000. Comm column = 1,000. Treaty: cess% = 40%, comm% = 25%. If Prem were genuinely gross, we'd expect something closer to Sum Insured × rate, where typical rates on this risk class produce gross around 10,000. The implied gross is therefore 10,000. - MCR-B4: 4,000 ≈ 10,000 × 40% ✔ — Prem behaves like a ceded figure. - MCR-B5: 1,000 ≈ 4,000 × 25% ✔ — commission is 25% of Prem, consistent with commission computed on the ceded basis. - Prem / SI is far below the ratio seen on peer gross columns ✔. - MCR-A1 on full-value basis: 4,000 − 1,000 − ... = N fails because 4,000 isn't the full value ✔. - **Result:** Prem resolved as ceded_premium; meaning conflict flagged. **5.2 MCR-D2 — Commission-bundles-Brokerage** **The problem.** A cedant sends a file where the \"Commission\" column secretly contains both ceding commission **and** brokerage lumped together into a single figure. The label says \"Commission\" but the number is really commission + brokerage. If the engine trusts the label and then also tries to deduct brokerage separately (perhaps from a brokerage% treaty figure), it double-counts. **How the engine detects it.** Two signals: 1. The column satisfies column ≈ G × (comm% + brok%) — the combined rate. 2. The column does **not** satisfy column ≈ G × comm% alone — the pure commission rate. **Decision.** Identify the column as commission_plus_brokerage (combined) and flag it. This prevents the engine from subtracting brokerage a second time. **Evidence output.** *\"Column equals comm% + brok% of gross, exceeding commission alone — it bundles commission and brokerage.\"* **Dependency.** Requires both the commission rate and the brokerage rate. **Worked example.** Comm column = 3,000. Gross = 10,000. Treaty: comm% = 17.5%, brok% = 5%. - MCR-B1 (pure commission): 3,000 ≈ 10,000 × 17.5% = 1,750 ✖ — fails by nearly 2×. - MCR-D2 (bundled): 3,000 ≈ 10,000 × (17.5% + 5%) = 2,250 — closer, but the file consistently shows 3,000 ≈ 10,000 × 22.5% × 1.33? Let's take the cleaner numeric case: if comm% + brok% = 30% and Gross = 10,000, then 3,000 ≈ 10,000 × 30% ✔. - **Result:** resolved as commission_plus_brokerage; flagged. **5.3 MCR-D3 — Ambiguous Net (partial net vs true net)** **The problem.** The word \"Net\" is overloaded. In some files it means gross minus commission only (tax has not been removed yet). In others it means gross minus commission minus tax (the true, fully-netted figure). If both are present in the same file under similar labels — e.g., \"Net Premium\" and \"Net Due\" — the engine must assign the right meaning to each. **How the engine detects it.** - If a column satisfies column ≈ G − C but **not** G − C − T, it is a partial net (net-of-commission-only). - If a column satisfies column ≈ G − C − T, it is a true net premium. - If both types of column are present in the same file, each is resolved to its matching identity. - If only a single \"Net\" column is present and tax = 0 (so A1 and A3 both pass), the column is genuinely ambiguous — flag it rather than guessing. **Decision.** Assign net_of_commission or net_premium per the matching identity. If undecidable, flag ambiguous. **Evidence output.** *\"This 'Net' equals gross − commission only; the true net (gross − commission − tax) is column Y.\"* **Dependency.** Requires the tax rate to distinguish between the two meanings. **Worked example.** Net column = 7,500 and Net Due column = 6,300. Gross = 10,000, Comm = 2,500, Tax = 1,200. - MCR-A3 on Net: 7,500 ≈ 10,000 − 2,500 ✔ → partial net - MCR-A1 on Net Due: 6,300 ≈ 10,000 − 2,500 − 1,200 ✔ → true net - **Result:** Net → net_of_commission, Net Due → net_premium. Both resolved cleanly. If only Net = 7,500 existed and Tax = 0, both A1 and A3 would hold (since removing a zero makes no difference), and MCR-E4 would flag the column as ambiguous. **5.4 MCR-D4 — Guard Against Out-of-Scope \"Net\"** **The problem.** Some files use \"Net\" to mean something entirely outside the premium model — for example, \"net of claims recoveries\" or \"net of reinsurance recoveries.\" These are claims-side concepts, not premium-side concepts. The engine must not try to force a premium meaning onto them. **How the engine detects it.** If a \"Net\"-labelled column fails to satisfy any of the Category A deduction identities (A1 through A5), the engine does not try to assign it a premium meaning. **Decision.** Flag as ambiguous and route to review. The user confirms what the column actually represents. **Purpose.** Prevents the engine from producing false-confident outputs on columns it doesn't actually understand. **5.5 MCR-D5 — Our-Share Labelled as 100%** **The problem.** A column is labelled \"Gross Premium (100%)\" — implying it contains the full premium at 100% basis — but the values are actually the our-share version (already scaled down by order%). This is a common error when a cedant copies figures from the wrong column of their internal system. **How the engine detects it.** The column satisfies column ≈ another_gross_column × order% (i.e., MCR-C1) — meaning it is behaving as the our-share version of a larger column, despite being labelled as the 100% version. **Decision.** Resolve as the our-share version; flag the label as misleading. **Dependency.** Requires the order% to be known. **Worked example.** GWP (100%) column = 20,000. Another column labelled GWP (Our) = 20,000. Treaty: order% = 20%. The two columns are identical values, both labelled gross — but the file also has Sum Insured = 1,000,000 with typical rates implying a true gross around 100,000. MCR-C1 confirms that both columns are the our-share figure (20,000 ≈ 100,000 × 20%), so the one labelled \"100%\" is mislabelled. :: For this provide a section in ui following the current pattern of Ui, and in the Review discrepencies section after the list of money column rules suggest these renamings, now if chosen for re naming, the Discrepency table they should be revised.(add a new module of revised discrepency instead of chaning in the current one, and display it separately) do not make changes in the current flow. and beside the \"Override discrepancy\" button also add \"rename the column as suggested\" which will open a popup screen showing the same \"list of money column rules suggest these renamings,\" . make a completely different module for this new feature without interfering in the current project integrate this seamlessly in the current implementation of how discrepancy is handled. Ensure that it does not break any current working module",
+      "project": "C:\\Users\\HimanshuSachan\\Desktop\\hackathon_project\\Revised\\tempo",
+      "branch": "main",
+      "startTime": 1793190457747,
+      "durationMs": 2119820,
+      "turns": 63,
+      "fileOps": 35,
+      "linesAdded": 2888,
+      "linesRemoved": 3,
+      "linesModified": 0,
+      "netLines": 2885,
+      "filesChanged": 18,
+      "filesWritten": 17,
+      "filesEdited": 2,
+      "toolCallsTotal": 88,
+      "toolCallsSuccess": 87,
+      "toolCallsFailure": 1,
+      "models": [
+        "claude-sonnet-5-5"
+      ],
+      "languages": [
+        "python",
+        "markdown",
+        "typescript"
+      ],
+      "tools": [
+        {
+          "toolName": "Bash",
+          "totalCalls": 49,
+          "successCount": 48,
+          "failureCount": 1,
+          "successRate": 97.95918367346938
+        },
+        {
+          "toolName": "Read",
+          "totalCalls": 18,
+          "successCount": 18,
+          "failureCount": 0,
+          "successRate": 100
+        },
+        {
+          "toolName": "Write",
+          "totalCalls": 17,
+          "successCount": 17,
+          "failureCount": 0,
+          "successRate": 100
+        },
+        {
+          "toolName": "Edit",
+          "totalCalls": 2,
+          "successCount": 2,
+          "failureCount": 0,
+          "successRate": 100
+        },
+        {
+          "toolName": "Grep",
+          "totalCalls": 1,
+          "successCount": 1,
+          "failureCount": 0,
+          "successRate": 100
+        },
+        {
+          "toolName": "Glob",
+          "totalCalls": 1,
+          "successCount": 1,
+          "failureCount": 0,
+          "successRate": 100
+        }
+      ],
+      "tokens": {
+        "input": 130,
+        "output": 108606,
+        "cacheRead": 11267258,
+        "cacheCreation": 266118,
+        "cacheCreation1h": 266118,
+        "total": 11642112
+      },
+      "costUSD": 3.277517800000001,
+      "cacheReadCostUSD": 1.1267258000000002,
+      "perModelCost": [
+        {
+          "model": "claude-sonnet-5-5",
+          "tokens": {
+            "input": 6,
+            "output": 12127,
+            "cacheRead": 583954,
+            "cacheCreation": 19487,
+            "cacheCreation1h": 19487,
+            "total": 615574
+          },
+          "costUSD": 0.2576254,
+          "unpriced": false
+        },
+        {
+          "model": "claude-sonnet-5-5",
+          "tokens": {
+            "input": 124,
+            "output": 96479,
+            "cacheRead": 10683304,
+            "cacheCreation": 246631,
+            "cacheCreation1h": 246631,
+            "total": 11026538
+          },
+          "costUSD": 3.0198924000000007,
+          "unpriced": false
+        }
+      ],
+      "hadLog": true,
+      "agentSessionFile": "C:\\Users\\HimanshuSachan\\.claude\\projects\\C--Users-HimanshuSachan-Desktop-hackathon-project-Revised-tempo\\49878524-fbdf-438f-92dc-ce03cdc4ce9d.jsonl",
+      "costSeries": [
+        {
+          "t": 1793190654902,
+          "cost": 0.061920199999999995,
+          "tokens": 41319
+        },
+        {
+          "t": 1793190677237,
+          "cost": 0.11924209999999999,
+          "tokens": 135437
+        },
+        {
+          "t": 1793190680686,
+          "cost": 0.1961809,
+          "tokens": 203636
+        },
+        {
+          "t": 1793190698943,
+          "cost": 0.3370429,
+          "tokens": 382813
+        },
+        {
+          "t": 1793190754849,
+          "cost": 0.4279743,
+          "tokens": 489484
+        },
+        {
+          "t": 1793190851189,
+          "cost": 0.6767196999999999,
+          "tokens": 737824
+        },
+        {
+          "t": 1793190899385,
+          "cost": 0.8059569,
+          "tokens": 1005083
+        },
+        {
+          "t": 1793190905834,
+          "cost": 0.8405724,
+          "tokens": 1141452
+        },
+        {
+          "t": 1793190966652,
+          "cost": 1.0048411000000002,
+          "tokens": 1432071
+        },
+        {
+          "t": 1793190973633,
+          "cost": 1.0390377000000002,
+          "tokens": 1580193
+        },
+        {
+          "t": 1793190993212,
+          "cost": 1.0871698,
+          "tokens": 1880883
+        },
+        {
+          "t": 1793191003804,
+          "cost": 1.1096970000000002,
+          "tokens": 2032560
+        },
+        {
+          "t": 1793191103320,
+          "cost": 1.1494355,
+          "tokens": 2337499
+        },
+        {
+          "t": 1793191310155,
+          "cost": 1.1928714,
+          "tokens": 2645584
+        },
+        {
+          "t": 1793191320425,
+          "cost": 1.2264503,
+          "tokens": 2804041
+        },
+        {
+          "t": 1793191345265,
+          "cost": 1.2965786,
+          "tokens": 3126933
+        },
+        {
+          "t": 1793191357274,
+          "cost": 1.3181521999999999,
+          "tokens": 3289402
+        },
+        {
+          "t": 1793191401542,
+          "cost": 1.4457942,
+          "tokens": 3629695
+        },
+        {
+          "t": 1793191428008,
+          "cost": 1.5458322,
+          "tokens": 3982842
+        },
+        {
+          "t": 1793191443083,
+          "cost": 1.6023348,
+          "tokens": 4165384
+        },
+        {
+          "t": 1793191494423,
+          "cost": 1.6630540999999999,
+          "tokens": 4533920
+        },
+        {
+          "t": 1793191514904,
+          "cost": 1.6971867999999999,
+          "tokens": 4720505
+        },
+        {
+          "t": 1793191764405,
+          "cost": 1.7463566999999998,
+          "tokens": 5095816
+        },
+        {
+          "t": 1793191783172,
+          "cost": 1.8479707999999997,
+          "tokens": 5495747
+        },
+        {
+          "t": 1793191795332,
+          "cost": 1.8887831999999998,
+          "tokens": 5700424
+        },
+        {
+          "t": 1793191865449,
+          "cost": 2.0420277999999996,
+          "tokens": 6123817
+        },
+        {
+          "t": 1793191883129,
+          "cost": 2.1315584999999997,
+          "tokens": 6343567
+        },
+        {
+          "t": 1793191915601,
+          "cost": 2.2427490999999997,
+          "tokens": 6790684
+        },
+        {
+          "t": 1793191945870,
+          "cost": 2.3356367999999996,
+          "tokens": 7246511
+        },
+        {
+          "t": 1793191955452,
+          "cost": 2.3640235999999994,
+          "tokens": 7475684
+        },
+        {
+          "t": 1793191992526,
+          "cost": 2.4237428999999993,
+          "tokens": 7936160
+        },
+        {
+          "t": 1793192220870,
+          "cost": 2.4566865999999994,
+          "tokens": 8167939
+        },
+        {
+          "t": 1793192359523,
+          "cost": 2.5223265999999995,
+          "tokens": 8634289
+        },
+        {
+          "t": 1793192372103,
+          "cost": 2.5514677999999997,
+          "tokens": 8868378
+        },
+        {
+          "t": 1793192385658,
+          "cost": 2.7275104999999997,
+          "tokens": 9379979
+        },
+        {
+          "t": 1793192425490,
+          "cost": 2.8472752,
+          "tokens": 9923535
+        },
+        {
+          "t": 1793192435954,
+          "cost": 2.8917593999999998,
+          "tokens": 10198755
+        },
+        {
+          "t": 1793192469734,
+          "cost": 3.0033937999999996,
+          "tokens": 10758925
+        },
+        {
+          "t": 1793192557785,
+          "cost": 3.1526181999999996,
+          "tokens": 11052403
+        },
+        {
+          "t": 1793192577567,
+          "cost": 3.2775177999999996,
+          "tokens": 11642112
+        }
+      ],
+      "costSource": "native-estimate",
+      "costBasis": "standard-api-tokens",
+      "dispatchesComplete": true,
+      "rootOwnCostUSD": 3.277517800000001,
+      "unlinkedCostUSD": 0,
+      "unlinkedAgentIds": [],
+      "rootOwnTokens": {
+        "input": 130,
+        "output": 108606,
+        "cacheRead": 11267258,
+        "cacheCreation": 266118,
+        "cacheCreation1h": 266118,
+        "total": 11642112
+      },
+      "unlinkedTokens": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "cacheCreation": 0,
+        "cacheCreation1h": 0,
+        "total": 0
+      },
+      "modelTimeline": [
+        {
+          "t": 1793190654902,
+          "model": "claude-sonnet-5-5",
+          "costUSD": 0.0619202,
+          "tokens": 41319
+        },
+        {
+          "t": 1793190659643,
+          "model": "claude-sonnet-5-5",
+          "costUSD": 0.0141592,
+          "tokens": 42857
+        },
+        {
+          "t": 1793190677237,
+          "model": "claude-sonnet-5-5",
+          "costUSD": 0.0431627,
+          "tokens": 51261
+        },
+        {
+          "t": 1793190680686,
+          "model": "claude-sonnet-5-5",
+          "costUSD": 0.0769388,
+          "tokens": 68199
+        },
+        {
+          "t": 1793190692426,
+          "model": "claude-sonnet-5-5",
+          "costUSD": 0.0727118,
+          "tokens": 82890
+        },
+        {
+          "t": 1793190698943,
+          "model": "claude-sonnet-5-5",
+          "costUSD": 0.0681502,
+          "tokens": 96287
+        },
+        {
+          "t": 1793190754849,
+          "model": "claude-sonnet-5-5",
+          "costUSD": 0.0909314,
+          "tokens": 106671
+        },
+        {
+          "t": 1793190806091,
+          "model": "claude-sonnet-5-5",
+          "costUSD": 0.1246916,
+          "tokens": 119205
+        },
+        {
+          "t": 1793190851189,
+          "model": "claude-sonnet-5-5",
+          "costUSD": 0.1240538,
+          "tokens": 129135
+        },
+        {
+          "t": 1793190866441,
+          "model": "claude-sonnet-5-5",
+          "costUSD": 0.0668773,
+          "tokens": 131525
+        },
+        {
+          "t": 1793190899385,
+          "model": "claude-sonnet-5-5",
+          "costUSD": 0.0623599,
+          "tokens": 135734
+        },
+        {
+          "t": 1793190905834,
+          "model": "claude-sonnet-5-5",
+          "costUSD": 0.0346155,
+          "tokens": 136369
+        },
+        {
+          "t": 1793190940384,
+          "model": "claude-sonnet-5-5",
+          "costUSD": 0.0803877,
+          "tokens": 142927
+        },
+        {
+          "t": 1793190966652,
+          "model": "claude-sonnet-5-5",
+          "costUSD": 0.083881,
+          "tokens": 147692
+        },
+        {
+          "t": 1793190973633,
+          "model": "claude-sonnet-5-5",
+          "costUSD": 0.0341966,
+          "tokens": 148122
+        },
+        {
+          "t": 1793190986617,
+          "model": "claude-sonnet-5-5",
+          "costUSD": 0.0269141,
+          "tokens": 150066
+        },
+        {
+          "t": 1793190993212,
+          "model": "claude-sonnet-5-5",
+          "costUSD": 0.021218,
+          "tokens": 150624
+        },
+        {
+          "t": 1793191003804,
+          "model": "claude-sonnet-5-5",
+          "costUSD": 0.0225272,
+          "tokens": 151677
+        },
+        {
+          "t": 1793191097537,
+          "model": "claude-sonnet-5-5",
+          "costUSD": 0.0188829,
+          "tokens": 152050
+        },
+        {
+          "t": 1793191103320,
+          "model": "claude-sonnet-5-5",
+          "costUSD": 0.0208556,
+          "tokens": 152889
+        },
+        {
+          "t": 1793191304405,
+          "model": "claude-sonnet-5-5",
+          "costUSD": 0.0199611,
+          "tokens": 153289
+        },
+        {
+          "t": 1793191310155,
+          "model": "claude-sonnet-5-5",
+          "costUSD": 0.0234748,
+          "tokens": 154796
+        },
+        {
+          "t": 1793191320425,
+          "model": "claude-sonnet-5-5",
+          "costUSD": 0.0335789,
+          "tokens": 158457
+        },
+        {
+          "t": 1793191334110,
+          "model": "claude-sonnet-5-5",
+          "costUSD": 0.0404814,
+          "tokens": 160969
+        },
+        {
+          "t": 1793191345265,
+          "model": "claude-sonnet-5-5",
+          "costUSD": 0.0296469,
+          "tokens": 161923
+        },
+        {
+          "t": 1793191357274,
+          "model": "claude-sonnet-5-5",
+          "costUSD": 0.0215736,
+          "tokens": 162469
+        },
+        {
+          "t": 1793191372750,
+          "model": "claude-sonnet-5-5",
+          "costUSD": 0.0492614,
+          "tokens": 167136
+        },
+        {
+          "t": 1793191401542,
+          "model": "claude-sonnet-5-5",
+          "costUSD": 0.0783806,
+          "tokens": 173157
+        },
+        {
+          "t": 1793191410299,
+          "model": "claude-sonnet-5-5",
+          "costUSD": 0.0501088,
+          "tokens": 174800
+        },
+        {
+          "t": 1793191428008,
+          "model": "claude-sonnet-5-5",
+          "costUSD": 0.0499292,
+          "tokens": 178347
+        },
+        {
+          "t": 1793191443083,
+          "model": "claude-sonnet-5-5",
+          "costUSD": 0.0565026,
+          "tokens": 182542
+        },
+        {
+          "t": 1793191462397,
+          "model": "claude-sonnet-5-5",
+          "costUSD": 0.0317541,
+          "tokens": 183445
+        },
+        {
+          "t": 1793191494423,
+          "model": "claude-sonnet-5-5",
+          "costUSD": 0.0289652,
+          "tokens": 185091
+        },
+        {
+          "t": 1793191514904,
+          "model": "claude-sonnet-5-5",
+          "costUSD": 0.0341327,
+          "tokens": 186585
+        },
+        {
+          "t": 1793191756424,
+          "model": "claude-sonnet-5-5",
+          "costUSD": 0.0217283,
+          "tokens": 186973
+        },
+        {
+          "t": 1793191764405,
+          "model": "claude-sonnet-5-5",
+          "costUSD": 0.0274416,
+          "tokens": 188338
+        },
+        {
+          "t": 1793191772500,
+          "model": "claude-sonnet-5-5",
+          "costUSD": 0.0637435,
+          "tokens": 198266
+        },
+        {
+          "t": 1793191783172,
+          "model": "claude-sonnet-5-5",
+          "costUSD": 0.0378706,
+          "tokens": 201665
+        },
+        {
+          "t": 1793191795332,
+          "model": "claude-sonnet-5-5",
+          "costUSD": 0.0408124,
+          "tokens": 204677
+        },
+        {
+          "t": 1793191801615,
+          "model": "claude-sonnet-5-5",
+          "costUSD": 0.0363003,
+          "tokens": 206848
+        },
+        {
+          "t": 1793191865449,
+          "model": "claude-sonnet-5-5",
+          "costUSD": 0.1169443,
+          "tokens": 216545
+        },
+        {
+          "t": 1793191883129,
+          "model": "claude-sonnet-5-5",
+          "costUSD": 0.0895307,
+          "tokens": 219750
+        },
+        {
+          "t": 1793191903419,
+          "model": "claude-sonnet-5-5",
+          "costUSD": 0.0659768,
+          "tokens": 222963
+        },
+        {
+          "t": 1793191915601,
+          "model": "claude-sonnet-5-5",
+          "costUSD": 0.0452138,
+          "tokens": 224154
+        },
+        {
+          "t": 1793191932318,
+          "model": "claude-sonnet-5-5",
+          "costUSD": 0.0524263,
+          "tokens": 227234
+        },
+        {
+          "t": 1793191945870,
+          "model": "claude-sonnet-5-5",
+          "costUSD": 0.0404614,
+          "tokens": 228593
+        },
+        {
+          "t": 1793191955452,
+          "model": "claude-sonnet-5-5",
+          "costUSD": 0.0283868,
+          "tokens": 229173
+        },
+        {
+          "t": 1793191966337,
+          "model": "claude-sonnet-5-5",
+          "costUSD": 0.028695,
+          "tokens": 229843
+        },
+        {
+          "t": 1793191992526,
+          "model": "claude-sonnet-5-5",
+          "costUSD": 0.0310243,
+          "tokens": 230633
+        },
+        {
+          "t": 1793192220870,
+          "model": "claude-sonnet-5-5",
+          "costUSD": 0.0329437,
+          "tokens": 231779
+        },
+        {
+          "t": 1793192237395,
+          "model": "claude-sonnet-5-5",
+          "costUSD": 0.0360995,
+          "tokens": 233028
+        },
+        {
+          "t": 1793192359523,
+          "model": "claude-sonnet-5-5",
+          "costUSD": 0.0295405,
+          "tokens": 233322
+        },
+        {
+          "t": 1793192372103,
+          "model": "claude-sonnet-5-5",
+          "costUSD": 0.0291412,
+          "tokens": 234089
+        },
+        {
+          "t": 1793192377082,
+          "model": "claude-sonnet-5-5",
+          "costUSD": 0.0818306,
+          "tokens": 247806
+        },
+        {
+          "t": 1793192385658,
+          "model": "claude-sonnet-5-5",
+          "costUSD": 0.0942121,
+          "tokens": 263795
+        },
+        {
+          "t": 1793192395947,
+          "model": "claude-sonnet-5-5",
+          "costUSD": 0.060175,
+          "tokens": 269834
+        },
+        {
+          "t": 1793192425490,
+          "model": "claude-sonnet-5-5",
+          "costUSD": 0.0595897,
+          "tokens": 273722
+        },
+        {
+          "t": 1793192435954,
+          "model": "claude-sonnet-5-5",
+          "costUSD": 0.0444842,
+          "tokens": 275220
+        },
+        {
+          "t": 1793192463535,
+          "model": "claude-sonnet-5-5",
+          "costUSD": 0.0651536,
+          "tokens": 279393
+        },
+        {
+          "t": 1793192469734,
+          "model": "claude-sonnet-5-5",
+          "costUSD": 0.0464808,
+          "tokens": 280777
+        },
+        {
+          "t": 1793192557785,
+          "model": "claude-sonnet-5-5",
+          "costUSD": 0.1492244,
+          "tokens": 293478
+        },
+        {
+          "t": 1793192568766,
+          "model": "claude-sonnet-5-5",
+          "costUSD": 0.0829605,
+          "tokens": 294352
+        },
+        {
+          "t": 1793192577567,
+          "model": "claude-sonnet-5-5",
+          "costUSD": 0.0419391,
+          "tokens": 295357
+        }
+      ],
+      "routedTurnsPct": 0,
+      "skillInvocations": [],
+      "agentInvocations": [],
+      "commandInvocations": [],
+      "sessionSource": "Pure chat"
+    }
+  ]
+}

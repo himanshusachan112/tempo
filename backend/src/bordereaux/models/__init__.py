@@ -14,6 +14,7 @@ from bordereaux.models.cleaning import CleaningResult
 from bordereaux.models.ai import AIInteraction
 from bordereaux.models.ai_credential import UserAICredential
 from bordereaux.models.money_rules import MoneyColumnResolution, MoneyRelation
+from bordereaux.models.column_rename import ColumnRenameDecision
 from bordereaux.models.discrepancy import DiscrepancyFinding, DiscrepancyOverride
 from bordereaux.models.artifact import AuditReportArtifact, PeriodExtractArtifact, ProcessedFileArtifact
 from bordereaux.models.format_template import FormatTemplate
@@ -42,6 +43,7 @@ __all__ = [
     "CleaningResult",
     "MoneyColumnResolution",
     "MoneyRelation",
+    "ColumnRenameDecision",
     "AIInteraction",
     "UserAICredential",
     "DiscrepancyFinding",

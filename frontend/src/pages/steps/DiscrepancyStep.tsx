@@ -9,10 +9,14 @@ import { DiscrepancyDetailDrawer } from '../../components/discrepancies/Discrepa
 import { OverrideModal } from '../../components/discrepancies/OverrideModal';
 import { AiActivityPanel } from '../../components/ai/AiActivityPanel';
 import { AiTag } from '../../components/ai/AiStatusBadge';
+import { RenameColumnsModal } from '../../components/renaming/RenameColumnsModal';
+import { RevisedDiscrepancySection } from '../../components/renaming/RevisedDiscrepancySection';
+import { SuggestedRenamingsSection } from '../../components/renaming/SuggestedRenamingsSection';
 import { ORIGIN_LABEL } from '../../utils/relations';
 import { api } from '../../api/endpoints';
 import { describeError, isNotAvailable } from '../../api/errors';
 import { discrepanciesKey, useDiscrepancies } from '../../hooks/useDiscrepancies';
+import { useColumnRenaming } from '../../hooks/useColumnRenaming';
 import { useRunAction } from '../../hooks/useRunAction';
 import { parseDevToken, useAuthToken } from '../../stores/devAuth';
 
@@ -27,6 +31,8 @@ export function DiscrepancyStep({ run }: { run: ProcessingRun }) {
   const { data, isLoading, error, refetch } = useDiscrepancies(run.id, true);
   const [selected, setSelected] = useState<DiscrepancyFinding | null>(null);
   const [overriding, setOverriding] = useState(false);
+  const [renaming, setRenaming] = useState(false);
+  const { query: renamingQuery, accept: acceptRenames, revert: revertRename } = useColumnRenaming(run.id, true);
 
   const override = useMutation({
     mutationFn: ({ id, reason, comment }: { id: string; reason: string; comment?: string }) =>
@@ -47,6 +53,9 @@ export function DiscrepancyStep({ run }: { run: ProcessingRun }) {
 
   const findings = data.findings;
   const canProceed = run.status === 'DISCREPANCY_REVIEW_PENDING';
+  const renamingWorkspace = renamingQuery.data ?? null;
+  const canRename = canOverride && !!renamingWorkspace?.editable;
+  const hasRenamable = !!renamingWorkspace?.suggestions.some((s) => s.renamable);
 
   return (
     <div className="space-y-6">
@@ -112,7 +121,22 @@ export function DiscrepancyStep({ run }: { run: ProcessingRun }) {
         </section>
       )}
 
+      {renamingWorkspace && (
+        <SuggestedRenamingsSection suggestions={renamingWorkspace.suggestions} notEvaluated={renamingWorkspace.not_evaluated} />
+      )}
+
       {findings.length > 0 && <DiscrepancyTable findings={findings} onSelect={(f) => setSelected(f)} />}
+
+      {renamingWorkspace?.revised.active && (
+        <RevisedDiscrepancySection
+          revised={renamingWorkspace.revised}
+          accepted={renamingWorkspace.suggestions.filter((s) => s.accepted)}
+          canUndo={canRename}
+          undoing={revertRename.isPending}
+          onUndo={(key) => revertRename.mutate(key)}
+        />
+      )}
+      {revertRename.isError && <ErrorState error={revertRename.error} title="Could not undo the renaming" />}
 
       <AiActivityPanel runId={run.id} />
 
@@ -136,6 +160,7 @@ export function DiscrepancyStep({ run }: { run: ProcessingRun }) {
           onClose={() => setSelected(null)}
           canOverride={canOverride && !selected.override}
           onOverride={() => setOverriding(true)}
+          onRenameColumn={canRename && hasRenamable ? () => setRenaming(true) : undefined}
         />
       )}
 
@@ -150,6 +175,18 @@ export function DiscrepancyStep({ run }: { run: ProcessingRun }) {
               { id: selected.id, reason, comment: comment || undefined },
               { onSuccess: () => setOverriding(false) },
             )
+          }
+        />
+      )}
+
+      {renaming && renamingWorkspace && (
+        <RenameColumnsModal
+          suggestions={renamingWorkspace.suggestions}
+          submitting={acceptRenames.isPending}
+          error={acceptRenames.isError ? describeError(acceptRenames.error) : null}
+          onClose={() => setRenaming(false)}
+          onSubmit={(keys, note) =>
+            acceptRenames.mutate({ keys, note: note || undefined }, { onSuccess: () => setRenaming(false) })
           }
         />
       )}

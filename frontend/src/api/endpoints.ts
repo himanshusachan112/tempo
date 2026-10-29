@@ -4,6 +4,7 @@
  * fields the contract leaves open lives here, not in components.
  */
 import { downloadFile, request, requestEnvelope, uploadWithProgress } from './client';
+import type { ColumnRenamingWorkspace } from './renamingTypes';
 import type {
   AiActivity,
   AiKeySaveResult,
@@ -441,6 +442,17 @@ export const api = {
       request<unknown>(`/processing-runs/${enc(runId)}/discrepancies/proceed`, { method: 'POST' }),
   },
 
+  /** Suggested column renamings (MCR-D1..D5) + revised discrepancies; the original findings are never touched. */
+  columnRenaming: {
+    get: (runId: string) => request<ColumnRenamingWorkspace>(`/processing-runs/${enc(runId)}/column-renamings`),
+    accept: (runId: string, body: { keys: string[]; note?: string }) =>
+      request<ColumnRenamingWorkspace>(`/processing-runs/${enc(runId)}/column-renamings/accept`, { method: 'POST', body }),
+    revert: (runId: string, key: string) =>
+      request<ColumnRenamingWorkspace>(`/processing-runs/${enc(runId)}/column-renamings?key=${enc(key)}`, {
+        method: 'DELETE',
+      }),
+  },
+
   reports: {
     generate: (runId: string) =>
       request<Report>(`/processing-runs/${enc(runId)}/reports/generate`, { method: 'POST' }),
@@ -451,7 +463,7 @@ export const api = {
           ? `processed_${runId}.csv`
           : artifactType === 'audit_report'
             ? `audit_report_${runId}.json`
-            : `audit_report_${runId}.txt`,
+            : `audit_report_${runId}.docx`,
       ),
     /** Cuts the processed file to a year or quarter and stores it as an immutable version. Month-only dates in the period are included. */
     createPeriodExtract: (runId: string, period: { year: number; quarter?: number; field: string }) =>

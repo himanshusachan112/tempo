@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import io
+
 from uuid import uuid4
 
 import pytest
+from docx import Document
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from bordereaux.mapping.service import generate_mapping_candidates
@@ -12,6 +15,7 @@ from bordereaux.financial_checks.service import proceed_to_report_generation, ru
 from bordereaux.ingestion.service import create_processing_run_with_upload, validate_processing_run
 from bordereaux.mapping.service import approve_candidate, finalize_mappings, list_candidates
 from bordereaux.models.project import Project, User
+from bordereaux.reporting.docx_report import DOCX_CONTENT_TYPE
 from bordereaux.reporting.service import generate_reports, resolve_download
 from bordereaux.storage.local import LocalStorageService
 from bordereaux.treaty.schemas import TreatyFiguresRequest
@@ -62,13 +66,15 @@ async def test_generate_reports_produces_real_artifacts(
     assert payload["source"]["filename"] == "f.csv"
 
     content, filename, content_type = await resolve_download(db_session, storage, run.id, "audit_report_human")
-    assert filename == "audit_report.txt"
-    assert content_type == "text/plain"
-    readable_report = content.decode("utf-8")
-    assert readable_report.startswith("Audit Report\n============")
-    assert "Run id:" in readable_report
-    assert "Financial checks:" in readable_report
-    assert "f.csv" in readable_report
+    assert filename == "audit_report.docx"
+    assert content_type == DOCX_CONTENT_TYPE
+    document = Document(io.BytesIO(content))
+    text = " ".join(p.text for p in document.paragraphs)
+    cells = " ".join(c.text for t in document.tables for row in t.rows for c in row.cells)
+    assert "Audit Report" in text and "Summary" in text
+    assert "f.csv" in cells  # source file appears in the summary table
+    assert "Gross Premium" in cells or "gross_premium" in cells  # mapping table
+    assert len(document.tables) >= 5
 
 
 async def test_generate_reports_requires_correct_state(

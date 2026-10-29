@@ -16,17 +16,23 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from bordereaux.ai.interactions import serialize_interaction
 from bordereaux.audit.service import AuditService
 from bordereaux.core.exceptions import NotFoundError, StateError, StorageError, ValidationError
 from bordereaux.core.models import ActorType, AuditAction, ProcessingRunStatus
 from bordereaux.core.utils import utcnow
+from bordereaux.models.ai import AIInteraction
 from bordereaux.models.artifact import AuditReportArtifact, PeriodExtractArtifact, ProcessedFileArtifact
 from bordereaux.models.asset import SourceAsset
+from bordereaux.models.audit_event import AuditEvent
 from bordereaux.models.cleaning import CleaningResult
+from bordereaux.models.column_rename import ColumnRenameDecision
 from bordereaux.models.discrepancy import DiscrepancyFinding, DiscrepancyOverride
-from bordereaux.models.mapping import ApprovedMapping, MappingSet
+from bordereaux.models.mapping import ApprovedMapping, MappingCandidate, MappingSet
+from bordereaux.models.money_rules import MoneyColumnResolution, MoneyRelation
 from bordereaux.models.run import ProcessingRun
 from bordereaux.models.treaty import TreatyFigures
+from bordereaux.reporting.docx_report import DOCX_CONTENT_TYPE, build_audit_docx
 from bordereaux.reporting.period import PeriodFilter, filter_processed_csv
 from bordereaux.runs.state_machine import ProcessingRunStateMachine
 from bordereaux.standardization.service import load_standardized_dataset
@@ -42,40 +48,6 @@ def _processed_file_path(run_id: UUID) -> str:
 
 def _audit_report_path(run_id: UUID) -> str:
     return f"runs/{run_id}/reports/audit_report.json"
-
-
-def _humanize_audit_value(label: str, value: Any, depth: int = 0) -> list[str]:
-    indent = "  " * depth
-    title = label.replace("_", " ").capitalize()
-    if isinstance(value, dict):
-        if not value:
-            return [f"{indent}{title}: None"]
-        lines = [f"{indent}{title}:"]
-        for key, child in value.items():
-            lines.extend(_humanize_audit_value(key, child, depth + 1))
-        return lines
-    if isinstance(value, list):
-        if not value:
-            return [f"{indent}{title}: None"]
-        lines = [f"{indent}{title}:"]
-        for item in value:
-            if isinstance(item, dict):
-                lines.append(f"{'  ' * (depth + 1)}-")
-                for key, child in item.items():
-                    lines.extend(_humanize_audit_value(key, child, depth + 2))
-            else:
-                rendered = "Not available" if item is None else str(item)
-                lines.append(f"{'  ' * (depth + 1)}- {rendered}")
-        return lines
-    rendered = "Not available" if value is None else str(value)
-    return [f"{indent}{title}: {rendered}"]
-
-
-def _format_audit_report_text(payload: dict[str, Any]) -> bytes:
-    lines = ["Audit Report", "============"]
-    for key, value in payload.items():
-        lines.extend(["", *_humanize_audit_value(key, value)])
-    return ("\n".join(lines) + "\n").encode("utf-8")
 
 
 async def _build_processed_file_csv(storage: StorageService, run_id: UUID, treaty: TreatyFigures | None = None) -> bytes:
@@ -134,6 +106,32 @@ async def _build_audit_report(db: AsyncSession, run: ProcessingRun) -> dict[str,
         status_counts[f.status] = status_counts.get(f.status, 0) + 1
         category_counts[f.category] = category_counts.get(f.category, 0) + 1
 
+
+    candidate_ids = [a.candidate_id for a in approved_mappings if a.candidate_id]
+    candidates: dict[Any, MappingCandidate] = {}
+    if candidate_ids:
+        candidates = {
+            c.id: c
+            for c in (
+                await db.execute(select(MappingCandidate).where(MappingCandidate.id.in_(candidate_ids)))
+            ).scalars()
+        }
+
+    def _for_run(model: Any, order: Any) -> Any:
+        return db.execute(select(model).where(model.run_id == run.id).order_by(order))
+
+    relations = list((await _for_run(MoneyRelation, MoneyRelation.created_at)).scalars())
+    resolutions = list((await _for_run(MoneyColumnResolution, MoneyColumnResolution.created_at)).scalars())
+    renamings = list((await _for_run(ColumnRenameDecision, ColumnRenameDecision.created_at)).scalars())
+    ai_calls = list((await _for_run(AIInteraction, AIInteraction.created_at)).scalars())
+    trail = list(
+        (
+            await db.execute(
+                select(AuditEvent).where(AuditEvent.target_id == run.id).order_by(AuditEvent.timestamp).limit(500)
+            )
+        ).scalars()
+    )
+
     return {
         "run_id": str(run.id),
         "project_id": str(run.project_id),
@@ -162,12 +160,17 @@ async def _build_audit_report(db: AsyncSession, run: ProcessingRun) -> dict[str,
             "mapping_set_id": str(mapping_set.id) if mapping_set else None,
             "schema_id": mapping_set.schema_id if mapping_set else None,
             "finalized_at": mapping_set.finalized_at.isoformat() if mapping_set and mapping_set.finalized_at else None,
+            "coverage_required": str(mapping_set.coverage_required) if mapping_set and mapping_set.coverage_required is not None else None,
+            "coverage_optional": str(mapping_set.coverage_optional) if mapping_set and mapping_set.coverage_optional is not None else None,
             "approved_mappings": [
                 {
                     "source_column": a.source_column,
                     "target_field": a.target_field,
                     "origin": a.origin,
                     "confidence_total": str(a.confidence_total),
+                    "confidence_breakdown": candidates[a.candidate_id].confidence_breakdown if a.candidate_id in candidates else {},
+                    "evidence": candidates[a.candidate_id].evidence if a.candidate_id in candidates else [],
+                    "transformation": a.transformation,
                 }
                 for a in approved_mappings
             ],
@@ -180,6 +183,7 @@ async def _build_audit_report(db: AsyncSession, run: ProcessingRun) -> dict[str,
             "cession_pct": str(figures.cession_pct) if figures else None,
             "order_pct": str(figures.order_pct) if figures and figures.order_pct is not None else None,
             "fx_rate": str(figures.fx_rate) if figures and figures.fx_rate is not None else None,
+            "expected_si_rate": str(figures.expected_si_rate) if figures and figures.expected_si_rate is not None else None,
             "settlement_currency": figures.settlement_currency if figures else None,
             "fx_rates": (figures.fx_rates or []) if figures else [],
         }
@@ -198,6 +202,8 @@ async def _build_audit_report(db: AsyncSession, run: ProcessingRun) -> dict[str,
                 "severity": f.severity,
                 "status": f.status,
                 "affected_row_number": f.affected_row_number,
+                "affected_field": f.affected_field,
+                "evidence": f.evidence or {},
                 "expected_value": str(f.expected_value) if f.expected_value is not None else None,
                 "observed_value": str(f.observed_value) if f.observed_value is not None else None,
                 "variance": str(f.variance) if f.variance is not None else None,
@@ -214,6 +220,58 @@ async def _build_audit_report(db: AsyncSession, run: ProcessingRun) -> dict[str,
                 ),
             }
             for f in findings
+        ],
+        "target_format": run.target_format,
+        "money_relations": [
+            {
+                "label": x.label,
+                "target_field": x.target_field,
+                "expression": f"{x.target_field} = "
+                + " ".join(
+                    f"{'-' if t.get('sign', 1) < 0 else '+'} {' x '.join([t['field'], *t.get('factors', [])])}"
+                    for t in (x.terms or [])
+                ).lstrip("+ "),
+                "origin": x.origin,
+                "rows_evaluated": x.last_rows_evaluated,
+                "rows_failed": x.last_rows_failed,
+                "skipped_reason": x.last_skipped_reason,
+            }
+            for x in relations
+        ],
+        "money_column_resolutions": [
+            {
+                "source_column": x.source_column,
+                "suggested_field": x.resolved_canonical_field,
+                "is_ambiguous": x.is_ambiguous,
+                "matched_rules": x.matched_rules,
+                "evidence": x.evidence,
+            }
+            for x in resolutions
+        ],
+        "column_renamings": [
+            {
+                "rule_id": x.rule_id,
+                "target_field": x.target_field,
+                "source_column": x.source_column,
+                "original_meaning": x.original_meaning,
+                "new_meaning": x.new_meaning,
+                "evidence": x.evidence,
+                "note": x.note,
+                "decided_by": str(x.decided_by) if x.decided_by else None,
+                "decided_at": x.created_at.isoformat() if x.created_at else None,
+            }
+            for x in renamings
+        ],
+        "ai_activity": [serialize_interaction(i) for i in ai_calls],
+        "audit_trail": [
+            {
+                "timestamp": e.timestamp.isoformat() if e.timestamp else None,
+                "event_type": e.event_type,
+                "action": e.action,
+                "actor_id": str(e.actor_id) if e.actor_id else None,
+                "reason": e.reason,
+            }
+            for e in trail
         ],
         "final_status": run.status,
     }
@@ -297,8 +355,8 @@ async def resolve_download(
     else:
         stmt = select(AuditReportArtifact).where(AuditReportArtifact.run_id == run_id)
         model_cls = AuditReportArtifact
-        filename = "audit_report.json" if artifact_type == "audit_report" else "audit_report.txt"
-        content_type = "application/json" if artifact_type == "audit_report" else "text/plain"
+        filename = "audit_report.json" if artifact_type == "audit_report" else "audit_report.docx"
+        content_type = "application/json" if artifact_type == "audit_report" else DOCX_CONTENT_TYPE
 
     artifact = (await db.execute(stmt.order_by(model_cls.generated_at.desc()))).scalars().first()
     if artifact is None:
@@ -312,7 +370,7 @@ async def resolve_download(
             raise StorageError("Stored audit report is not valid JSON") from exc
         if not isinstance(payload, dict):
             raise StorageError("Stored audit report has an invalid structure")
-        content = _format_audit_report_text(payload)
+        content = build_audit_docx(payload)
     return content, filename, content_type
 
 

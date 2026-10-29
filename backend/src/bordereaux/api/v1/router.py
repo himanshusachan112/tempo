@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from bordereaux.api.v1.routes.ai import router as ai_router
 from bordereaux.api.v1.routes.cleaning import router as cleaning_router
+from bordereaux.api.v1.routes.column_renaming import router as column_renaming_router
 from bordereaux.api.v1.routes.financial_checks import router as financial_checks_router
 from bordereaux.api.v1.routes.format_templates import router as format_templates_router
 from bordereaux.api.v1.routes.mapping import router as mapping_router
@@ -40,6 +41,7 @@ api_router.include_router(mapping_router)
 api_router.include_router(ai_router)
 api_router.include_router(format_templates_router)
 api_router.include_router(financial_checks_router)
+api_router.include_router(column_renaming_router)
 api_router.include_router(reports_router)
 api_router.include_router(reconciliation_router)
 

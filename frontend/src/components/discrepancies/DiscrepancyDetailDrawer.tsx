@@ -6,11 +6,14 @@ export function DiscrepancyDetailDrawer({
   onClose,
   onOverride,
   canOverride,
+  onRenameColumn,
 }: {
   finding: DiscrepancyFinding;
   onClose: () => void;
   onOverride: () => void;
   canOverride: boolean;
+  /** Opens the suggested-renamings popup; omitted when there is nothing to suggest. */
+  onRenameColumn?: () => void;
 }) {
   return (
     <aside
@@ -73,7 +76,7 @@ export function DiscrepancyDetailDrawer({
         </div>
       )}
 
-      {finding.override ? (
+      {finding.override && (
         <div className="mt-4 rounded border border-blue-200 bg-blue-50 p-3 text-sm">
           <p className="font-medium text-blue-900">Overridden</p>
           <p className="mt-1 text-blue-900">Reason: {finding.override.reason}</p>
@@ -82,17 +85,28 @@ export function DiscrepancyDetailDrawer({
             This decision does not delete the original finding above - both are preserved.
           </p>
         </div>
-      ) : (
-        canOverride && (
+      )}
+
+      <div className="mt-4 flex flex-wrap gap-2">
+        {!finding.override && canOverride && (
           <button
             type="button"
             onClick={onOverride}
-            className="mt-4 rounded bg-slate-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-slate-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-700"
+            className="rounded bg-slate-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-slate-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-700"
           >
             Override this finding
           </button>
-        )
-      )}
+        )}
+        {onRenameColumn && (
+          <button
+            type="button"
+            onClick={onRenameColumn}
+            className="rounded border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-800 hover:bg-slate-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-700"
+          >
+            Rename the column as suggested
+          </button>
+        )}
+      </div>
     </aside>
   );
 }

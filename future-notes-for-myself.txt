@@ -10,10 +10,6 @@ API KEY : ""
 
 
 
-Do not hinder to any existing logic, there needs to be only one change in the project now, I would suggest to make another separate module for it, In the Discrepancies handling section, add a button, that in case if no row is following the rule, probably the name of the column needs to get changes in accordance to what it's values are exactly that, read these and as for now only handle these ::Each trap below is explained in three
-parts: the problem, how the engine detects it, and a worked example with real
-numbers.
-
 **5.1 MCR-D1 — Gross-is-actually-Ceded**
 
 **The problem.**
@@ -189,4 +185,4 @@ rates implying a true gross around 100,000. MCR-C1 confirms that both columns
 are the our-share figure (20,000 ≈ 100,000 × 20%), so the one labelled
 "100%" is mislabelled. :: 
 
-For this provide a section in ui following the current pattern of Ui, and in the Review discrepencies section after the list of money column rules suggest these renamings, now if chosen for re naming, the Discrepency table they should be revised.(add a new module of revised discrepency instead of chaning in the current one, and display it separately) do not make changes in the current flow. and beside the "Override discrepancy" button also add "rename the column as suggested" which will open a popup screen showing the same "list of money column rules suggest these renamings," . make a completely different module for this new feature without interfering in the current project.
+For this provide a section in ui following the current pattern of Ui, and in the Review discrepencies section after the list of money column rules suggest these renamings, now if chosen for re naming, the Discrepency table they should be revised.(add a new module of revised discrepency instead of chaning in the current one, and display it separately) do not make changes in the current flow. and beside the "Override discrepancy" button also add "rename the column as suggested" which will open a popup screen showing the same "list of money column rules suggest these renamings," . make a completely different module for this new feature without interfering in the current project integrate this seamlessly in the current implementation of how discrepancy is handled. Ensure that it does not break any current working module

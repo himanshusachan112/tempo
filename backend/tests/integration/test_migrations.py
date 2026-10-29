@@ -39,7 +39,7 @@ def test_upgrade_head_matches_models_and_downgrades(tmp_path: Path) -> None:
         version = conn.execute("SELECT version_num FROM alembic_version").fetchone()[0]
 
     assert set(Base.metadata.tables) <= tables
-    assert version == "020"
+    assert version == "021"
     for table in ("audit_events", "treaty_figures", "discrepancy_overrides", "period_extract_artifacts"):
         assert {f"trg_{table}_no_update", f"trg_{table}_no_delete"} <= triggers
 
